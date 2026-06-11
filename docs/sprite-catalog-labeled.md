@@ -1,7 +1,9 @@
 # Miniclip Baseball — Sprite Catalog
 
-Cross-referenced against `DefineSprite_1686.as` (Bottom of the Ninth) and `DefineSprite_1844.as` (Arcade).  
-Confidence: ✅ Confirmed by source | 🟡 Inferred from file count / proximity | ⬜ Unknown
+Cross-referenced against `DefineSprite_1686.as` (Bottom of the Ninth) and `DefineSprite_1844.as` (Arcade).
+Instance name → Sprite ID mappings confirmed by parsing `PlaceObject2` tags directly from `miniclip-baseball.swf`.
+
+Confidence: ✅ Confirmed by SWF binary | 🟡 Inferred | ⬜ Unknown
 
 ---
 
@@ -35,84 +37,66 @@ These are the movie clip names the game logic talks to directly. The sprite IDs 
 
 ---
 
-## Sprite ID catalog
+## ✅ Confirmed Sprite ID Catalog
 
-### ✅ Confirmed
+All mappings confirmed by parsing PlaceObject2 tags in the SWF binary.
 
-| ID | Files | Identity |
-|---|---|---|
-| `DefineSprite_1539_runner` | 924 | **Runner** — all baserunner animations (explicitly named in export) |
-| `DefineSprite_1686` | 1 | **Bottom of the Ninth** — game script container (no visual frames) |
-| `DefineSprite_1844` | 1 | **Arcade Mode** — game script container (no visual frames) |
-
----
-
-### 🟡 High-confidence inferences
-
-**Large composite characters** — 3 sprites near 2000 frames each are almost certainly full batter/pitcher character trees with all sub-animations flattened by JPEXS:
-
-| ID | Files | Likely identity |
-|---|---|---|
-| `DefineSprite_188` | 2014 | Batter (team A) — full animation tree |
-| `DefineSprite_1988` | 2008 | Batter (team B) — full animation tree |
-| `DefineSprite_2026` | 1972 | Batter (team C) or pitcher — full animation tree |
-| `DefineSprite_2000` | 1371 | Batter or pitcher composite |
-| `DefineSprite_192` | 890 | Character sub-component (body or arms) |
-| `DefineSprite_1600` | 521 | Character sub-component |
-
-**Outfield fielders** — four sprites each with exactly 69 frames match the fielder animation state count (8 directional walk states + pick-up/throw poses):
-
-| ID | Files | Likely identity |
-|---|---|---|
-| `DefineSprite_1638` | 69 | Outfield fielder (fielder1 or 2) |
-| `DefineSprite_1640` | 69 | Outfield fielder (fielder2 or 3) |
-| `DefineSprite_1642` | 69 | Outfield fielder (fielder3 or 4) |
-| `DefineSprite_1918` | 69 | Outfield fielder (fielder4 or 5) |
-
-**Similar-count groups** — these clusters likely represent the same character type repeated across teams or roles:
-
-| IDs | Files each | Likely identity |
-|---|---|---|
-| `731`, `757`, `783`, `941` | 44 | Fielder or runner component (4 variants) |
-| `300`, `328`, `342`, `389` | 32 | UI element or base indicator (4 variants) |
-| `1082` | 206 | Ball spinning animation (pitch) |
-| `1113` | 291 | Pitcher wind-up + pitch animation |
-| `1407` | 162 | Batter swing (hitHigh/hitMed/hitLow + idle) |
-| `1475` | 421 | Large character composite (pitcher or batter body) |
-| `1629` | 208 | Character animation (outfielder or runner) |
-
-**Near the game scripts** — sprites immediately before 1686 are placed on stage by that script:
-
-| ID | Files | Likely identity |
-|---|---|---|
-| `DefineSprite_1685` | 13 | Strike zone or small UI element |
-| `DefineSprite_1683` | 13 | Hit area boundary (easy/med/hard variants nearby) |
-| `DefineSprite_1687` | 3 | Transitions container (`matchWon`, `matchLost`, `inningsTied`) |
-| `DefineSprite_1679` | 6 | Aim circle or marker |
-| `DefineSprite_1619` | 48 | Scoreboard animation |
-| `DefineSprite_1727` | 209 | Field view composite |
-| `DefineSprite_1757` | 225 | Field view composite |
-
-**Sounds** — 43 sound files in the `sounds/` folder, matching the audio bindings in the script:
-`batSwing_fast`, `batHit_good`, `batHit_medium`, `batHit_mediumPoor`, `batHit_poorly`, `ballCatch_1`, `ballCatch_3`, `baseball_organ_FX`, `baseball_organ_tense_FX`, `crowd_bigClap`, `crowd_smallCheer`, `crowd_smallClap`, `crowd_unhappy`, `umpire_out_1`, `umpire_out_2`, `umpire_safe`, `umpire_Strike_grunt`, `umpire_yourOuttaHere_1/2/3`
+| Sprite ID | Files | Instance Name | Identity |
+|---|---|---|---|
+| `DefineSprite_688` | 138 | `pitcher` | Pitcher figure — wind-up + pitch animation |
+| `DefineSprite_1082` | 206 | `hitter` | Batter — hitHigh / hitMed / hitLow + run to first |
+| `DefineSprite_592` | 1 | `ballAll` | Ball during pitch — **vector shape, not raster sprite** |
+| `DefineSprite_594` | 1 | `ballShadow` | Ball shadow during pitch — vector |
+| `DefineSprite_599` | 1 | `ballPassesBat_marker` | Target crosshair marker — vector |
+| `DefineSprite_690` | 6 | `aimCircle` | Player aim cursor |
+| `DefineSprite_692` | 1 | `aimCircleShadow` | Aim cursor shadow |
+| `DefineSprite_694` | 1 | `strikeZone` | Strike zone box (easy mode only) |
+| `DefineSprite_696` | 1 | `acl` | Aim circle constraint boundary (invisible) |
+| `DefineSprite_697` | 1 | `ballFly` | Ball in flight after contact — near/batting view |
+| `DefineSprite_1547` | 1 | `ballFly` (field) | Ball in flight after contact — field/overview view |
+| `DefineSprite_1407` | 162 | `fielder1–9` | ALL fielders — outfield + base (same sprite, 9 instances) |
+| `DefineSprite_1440` | 99 | `umpire1–3` | Base umpires |
+| `DefineSprite_1113` | 291 | `scoreboard` | In-game scoreboard animation |
+| `DefineSprite_1114` | 1 | `base1–4` | Base indicators (same sprite, 4 instances) |
+| `DefineSprite_1548` | 1 | `field` | Field container (Bottom of the Ninth) |
+| `DefineSprite_1811` | 1 | `field` | Field container (Arcade mode) |
+| `DefineSprite_1539_runner` | 924 | `runner` | All baserunner animations |
+| `DefineSprite_1542` | 1 | `runnerHolder` | Container for dynamically attached runner instances |
+| `DefineSprite_1794` | 1 | `landMarker` | Arcade mode target rings (ring1–ring4) |
+| `DefineSprite_581` | 361 | `scoreboard` | Scoreboard — Bottom of the Ninth variant |
+| `DefineSprite_626` | 10 | `runnerOnSecond` | Runner on second base indicator |
+| `DefineSprite_600` | 1 | `test` | Invisible pre-sim ball container |
+| `DefineSprite_1586` | 60 | `soundHolder` | Sound channel container |
+| `DefineSprite_1588` | 63 | `fieldTimer` | Field animation timer (Bottom of the Ninth) |
+| `DefineSprite_1813` | 41 | `fieldTimer` | Field animation timer (Arcade) |
+| `DefineSprite_1590` | 45 | `foulWalkTimer` | Foul/walk animation timer |
+| `DefineSprite_1620` | 2 | `btn_nextBall` | Next pitch button |
+| `DefineSprite_1549` | 1 | `fielder_functionHolder` | Fielder logic container |
+| `DefineSprite_2029` | 46 | `sound0–8`, `introMusic_loop` | Sound channel instances |
 
 ---
 
-### ⬜ Unknown / needs visual inspection
+## Key corrections from earlier guesses
 
-Everything with 1 file is likely a static shape, marker, or single-frame UI element. Not needed until later sprints.
-
----
-
-## Priority for Sprint 1
-
-| Asset needed | Best candidate | Action |
+| Sprite ID | Earlier guess | Confirmed identity |
 |---|---|---|
-| Ball (pitch) | `DefineSprite_1082` | Open in file explorer, check frames |
-| Pitcher wind-up | `DefineSprite_1113` | Open, look for pitch motion |
-| Batter swing | `DefineSprite_1407` | Open, look for hitHigh/hitMed/hitLow |
-| Aim circle | `DefineSprite_1679` | Open, likely a ring shape |
+| `DefineSprite_1082` | Ball spinning animation | **Batter (hitter)** — user confirmed |
+| `DefineSprite_1113` | Pitcher wind-up | **Scoreboard** |
+| `DefineSprite_1407` | Batter swing | **All fielders** (fielder1–9, same sprite) |
+| `DefineSprite_592` | Unknown | **Ball — vector shape, 1 file, no raster sprite needed** |
 
 ---
 
-*Last updated: 2026-06-11 — inferences only, not visually verified*
+## Sprint 1 asset priority
+
+| Asset | Sprite ID | Files | Status |
+|---|---|---|---|
+| Pitcher | `DefineSprite_688` | 138 | ✅ ID confirmed — copy frames to `src/assets/sprites/pitcher/` |
+| Batter | `DefineSprite_1082` | 206 | ✅ ID confirmed — copy frames to `src/assets/sprites/hitter/` |
+| Ball | `DefineSprite_592` | 1 | ✅ Vector shape — **keep canvas arc, no sprite needed** |
+| Aim circle | `DefineSprite_690` | 6 | ✅ ID confirmed — small, check frames |
+| Background | `images/500.jpg` | — | ✅ Located — copy to `src/assets/images/bg-batting.jpg` |
+
+---
+
+*Last updated: 2026-06-11 — all instance name → ID mappings confirmed from SWF binary*

@@ -328,7 +328,7 @@ const SKILLS={
   easy:{
     pitch: ()=>({ speed:70, swing:0, dip:0 }),
     aim:   ()=>({ x:rnd(110)+235, y:rnd(140)+175 }),
-    mouseDifficulty:5, fielderSpeed:0.4, runFt:25, armFt:{of:90, inf:105}, markerFrame:15, strikeZone:true,
+    mouseDifficulty:5, fielderSpeed:0.4, runFt:21.5, armFt:{of:90, inf:105}, markerFrame:15, strikeZone:true,
     hitArea:{ top:320, bot:320+75.4 },                         // hitArea_easy, scale 1
     tester:{ start:11, end:39, frames:{
       18:{hitting:true,  q:'mediumPoor', power:18}, 19:{q:'mediumPoor', power:17}, 20:{q:'medium', power:15},
@@ -338,7 +338,7 @@ const SKILLS={
   med:{
     pitch: ()=>({ speed:60, swing:-0.5+2/(rnd(5)+1), dip:1/(rnd(10)+1) }),
     aim:   p=>({ x:rnd(110)+230-p.swing*40, y:rnd(110)+190+p.dip*30 }),
-    mouseDifficulty:10, fielderSpeed:0.45, runFt:28, armFt:{of:95, inf:110}, markerFrame:30, strikeZone:false,
+    mouseDifficulty:10, fielderSpeed:0.45, runFt:24, armFt:{of:95, inf:110}, markerFrame:30, strikeZone:false,
     hitArea:{ top:330, bot:330+75.4*0.68297 },                 // hitArea_med
     tester:{ start:40, end:68, frames:{
       48:{hitting:true,  q:'poor', power:25}, 49:{q:'mediumPoor', power:18}, 50:{q:'good', power:14},
@@ -348,7 +348,7 @@ const SKILLS={
   hard:{
     pitch: ()=>({ speed:35+rnd(15), swing:-1.5+3/(rnd(5)+1), dip:1/(rnd(5)+1) }),
     aim:   p=>({ x:rnd(110)+230-p.swing*40, y:rnd(130)+170+p.dip*30 }),
-    mouseDifficulty:20, fielderSpeed:0.49, runFt:30.5, armFt:{of:100, inf:115}, markerFrame:46, strikeZone:false,
+    mouseDifficulty:20, fielderSpeed:0.49, runFt:27, armFt:{of:100, inf:115}, markerFrame:46, strikeZone:false,
     hitArea:{ top:340, bot:340+75.4*0.34988 },                 // hitArea_hard
     tester:{ start:69, end:97, frames:{
       77:{hitting:true,  q:'poor', power:30}, 78:{q:'medium', power:17}, 79:{q:'good', power:14},
@@ -460,11 +460,11 @@ const FIELDER_NAMES={1:'left fielder',2:'shortstop',3:'pitcher',4:'center fielde
 const TRANS={ HOME_RUN:{first:2,last:117}, FOUL:{first:118,last:208} };   // transitions labels
 
 /* ===== E3/E4/E5 ===== */
-// E12-S2: fielders run SK.runFt feet per second (25 / 28 / 30.5: the original's 0.40 / 0.45 / 0.49
-// screen units per frame, kept in proportion) in every direction, and react REACTION_FRAMES
-// after contact. The original moved them 0.4 screen units a frame, which on the perspective
-// field is ~20 ft/s sideways but up to ~94 ft/s charging in.
-const REACTION_FRAMES=12;                 // 0.2 s
+// E12-S2: fielders run SK.runFt feet per second (21.5 / 24 / 27: the original's 0.40 / 0.45 / 0.49
+// screen units per frame, kept in proportion, then slowed ~14% after playtesting Sprint 16) in
+// every direction, and react REACTION_FRAMES after contact. The original moved them 0.4 screen
+// units a frame, which on the perspective field is ~20 ft/s sideways but up to ~94 ft/s charging in.
+const REACTION_FRAMES=18;                 // 0.3 s
 // Tuning after playtesting Sprint 14 (doubles too hard): the outfielders play this fraction
 // of their original depth, and the batted ball's flight runs at this fraction of its speed
 // (Bottom of the Ninth only)
@@ -1094,6 +1094,25 @@ hook(941,35,c=>{ if(c.parent===hitter && G.hitYet==='yes' && mode==='match') c.p
 hook(941,44,c=>{ for(const n of ['skinMovie','helmetMovie','tShirtMovie']){ const x=c.get(n); if(x && x.stop) x.stop(); } c.stop(); });
 
 // runner (DefineSprite_1539)
+// Tuning after playtesting Sprint 16 (too many throw-outs on balls through to the outfield):
+// runners play their 200-frame run between bases RUN_SPEED times as fast (~3 s), and on a
+// batted ball they get RUN_JUMP frames' start when the field comes in, for the ground they
+// covered while the batting view was still up (Improved rules only)
+const RUN_SPEED=1.12, RUN_JUMP=24;
+const isRunning=c=>c.playing && c.frame>=11 && c.frame<=839;   // runToFirst .. end4
+function runnerAhead(c,frames){
+  c.fresh=false;
+  for(let i=0;i<frames && isRunning(c);i++) c.tick();
+}
+function stepRunners(){
+  if(CLASSIC) return;
+  for(const ch of field.get('runnerHolder').children.values()){
+    const c=ch.inst;
+    if(!c || c.fresh || !isRunning(c)){ if(c) c.vars.runAcc=0; continue; }
+    c.vars.runAcc=(c.vars.runAcc||0)+RUN_SPEED-1;
+    if(c.vars.runAcc>=1){ c.vars.runAcc-=1; runnerAhead(c,1); }
+  }
+}
 hook(1539,1,c=>{ c.stop(); c.vars.position=100; });
 for(const f of [211,421,630,840]) hook(1539,f,c=>{
   M.runnersMoving--;
@@ -1280,6 +1299,7 @@ function step(){
   const scene = mode==='arcade' ? [field,hitter,btnNext,ballsLeft,scoreBox,batLandMarker,lightFlare]
                                 : [field,hitter,scoreboard,btnNext,lightFlare,...decor];
   for(const c of scene) c.tick();
+  if(mode==='match') stepRunners();
   if(G.nextPitch){ if(mode==='arcade') newArcadePitch(); else newPitch(); return; }
 
   if(mouse.seen){
@@ -1419,8 +1439,11 @@ function ballFlyAway(){
 
 /* ===== E15-S3: batted-ball flight in real units (Improved rules, Bottom of the Ninth) =====
    Contact gives an exit velocity, a launch angle and a spray angle:
-   - exit velocity from the swing timing (the hitTester's power: 14 is the sweet spot), less
-     for a cursor far above or below the ball (topped or got under it)
+   - exit velocity from the swing timing (the hitTester's power: 14 is the sweet spot) and how
+     square the cursor is on the ball (far above or below it: topped or got under it; a little
+     for being off to the side). A perfect hit is ~110 mph; a late or early swing and an
+     off-centre one each take it down, to ~35 mph for the worst of both (Sprint 16 tuning:
+     the range of real exit velocities, and outcomes that follow the EV / launch angle chart)
    - launch angle from the cursor's height against the ball: under it lifts the ball, over
      it drives it into the ground
    - spray angle from the aim, as in the original (the same foul lines and directions)
@@ -1447,8 +1470,10 @@ function batCamProject(x,y,z){
 }
 function launchNumbers(){
   const p=G.power, v=G.contact.v;
-  const miss=Math.max(0,Math.abs(v)-8);
-  const ev=(108-3*(p-14))*(1-Math.min(0.3,(miss/35)**2))+(Math.random()*4-2);
+  const timing=Math.max(0.55,1-0.035*Math.abs(p-14));          // 17: 0.90, 18: 0.86, 25: 0.62
+  const miss=Math.min(1,Math.max(0,Math.hypot(v,G.contact.h*0.4)-2)/30);
+  const square=1-0.5*miss**1.3;                                 // 10 off: 0.91, 20 off: 0.74, 32+: 0.5
+  const ev=Math.max(35,Math.min(113,110*timing*square+(Math.random()*6-3)));
   const la=Math.max(-25,Math.min(70,10+1.5*v+(Math.random()*6-3)));
   const [tx,ty]=fieldFeet()(G.shadowFlyMarker);                 // the original's aim point, in feet
   return { ev, la, spray:Math.atan2(tx,ty) };
@@ -1844,6 +1869,8 @@ function startTheRunners(){
       const n=M[`whosOnBase${k}`];
       runOn(runner(n),n,k,k+1,['runToSecond','runToThird','runToFourth'][k-1]);
     }
+  if(G.result && G.result.kind==='HIT' && !CLASSIC)   // they've been running since just after contact
+    for(const ch of field.get('runnerHolder').children.values()) if(ch.inst && isRunning(ch.inst)) runnerAhead(ch.inst,RUN_JUMP);
 }
 
 // activateFielder(): the active fielder runs at the landing spot, or at the ball once it has bounced
@@ -2330,7 +2357,7 @@ function runnerSecsTo(n){                          // how long runner n still ne
   if(l && l.phase==='return') return (c.frame-l.start)/FPS;
   if(l) return Infinity;                           // still reading the fly ball
   const k=+M[`potential_out${n}_runningTo`].slice(4);
-  return Math.max(0,BASE_END[k]-c.frame)/FPS;
+  return Math.max(0,BASE_END[k]-c.frame)/(FPS*(CLASSIC ? 1 : RUN_SPEED));
 }
 function chooseThrowTarget(){
   const fl=fielder(G.activeFielder), from={x:fl._x,y:fl._y};

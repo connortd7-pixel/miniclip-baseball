@@ -25,6 +25,8 @@ canvas{display:block;cursor:none;box-shadow:0 6px 40px rgba(0,0,0,.6);height:aut
 /* controller pointer (menus and the field view) and the "controller connected" note */
 #padptr{position:fixed;left:0;top:0;width:22px;height:22px;pointer-events:none;display:none;z-index:5;
   background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Cpath d='M2 2l0 16 4.5-4.2 3 6.6 3-1.4-3-6.4 6.3-.3z' fill='%23fff' stroke='%23000' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat;}
+#padfocus{position:fixed;display:none;pointer-events:none;z-index:5;border:3px solid #ffd54a;border-radius:8px;
+  box-shadow:0 0 0 2px rgba(0,0,0,.55),0 0 14px rgba(255,213,74,.7);transition:left .08s,top .08s,width .08s,height .08s;}
 #padnote{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);max-width:calc(100vw - 24px);padding:8px 12px;border-radius:6px;
   background:rgba(6,6,15,.85);border:1px solid rgba(255,255,255,.2);color:#cfd8e3;font:12px/1.5 monospace;text-align:center;
   pointer-events:none;opacity:0;transition:opacity .3s;z-index:6;}
@@ -33,6 +35,7 @@ canvas{display:block;cursor:none;box-shadow:0 6px 40px rgba(0,0,0,.6);height:aut
 <canvas id="c" width="700" height="475"></canvas>
 <button id="fs" type="button" title="Full screen (F)" hidden>&#x26F6; Full screen</button>
 <div id="padptr"></div>
+<div id="padfocus"></div>
 <div id="padnote" role="status"></div>
 <p id="rotate">Turn your phone sideways for a bigger view.<br>Drag to aim &middot; tap to swing</p>
 <script src="assets/swf/swf.js"></script>
@@ -2255,6 +2258,65 @@ function carryOn(c,base){
   if(!taken) runOn(c,n,base,base+1,['runToSecond','runToThird','runToFourth'][base-1]);
   if(M.runnersMoving===0){ btnNext._visible=true; btnNext.gotoAndStop(2); }   // he had to stop after all
 }
+// Sending a runner back (controller R1/RB): a runner on his way to base k turns round to the
+// base he left, if it is still free, the way a runner does on a caught fly ball (E11-S2): his
+// run plays backwards and he can be thrown out before he gets there.
+function canSendBack(n){
+  if(CLASSIC || G.inningOver || G.ballInPlay!=='yes' || M[`batsman${n}_out`]!=='no' || M[`potential_out${n}`]!=='yes') return null;
+  const l=G.lead[n]; if(l && l.phase==='return') return null;
+  const to=M[`potential_out${n}_runningTo`], k=/^base\d$/.test(to) ? +to.slice(4) : 0, from=k-1;
+  if(from<1 || from>3) return null;                // the batter can't go back home
+  const c=runner(n), start=c._frameOf(['runToSecond','runToThird','runToFourth'][from-1]);
+  if(c.frame<start || c.frame>BASE_END[k]) return null;   // only while he is on that leg
+  if(M[`base${from}_state`]!=='empty') return null;
+  for(let o=1;o<=18;o++) if(o!==n && M[`potential_out${o}_runningTo`]===`base${from}`) return null;
+  return { from, to:k, start };
+}
+function sendBack(n){
+  const b=canSendBack(n); if(!b) return false;
+  const c=runner(n);
+  delete G.sendOn[n];
+  G.lead[n]={ from:b.from, to:b.to, start:b.start, phase:'return' };   // stepLeads walks him back
+  c.stop(); faceBack(c);
+  M[`base${b.to}_potential`]='no';
+  M[`potential_out${n}_runningTo`]=`base${b.from}`;
+  M[`base${b.from}_potential`]='yes';
+  btnNext._visible=false;
+  return true;
+}
+// The runner the controller has picked gets a yellow glow around his outline: his figure is drawn
+// alone offscreen, turned into a yellow silhouette, stamped in a ring around himself (a bright
+// edge plus a softer outer one), his own shape cut back out, and the halo laid over the field,
+// so his team colours underneath are untouched.
+let glowRunner=0;
+// device matrix of a clip inside the field, which drawField() draws with FIELD_M, not STAGE_M
+function fieldMatrix(clip){
+  let m=clip.entry.m;
+  for(let c=clip.parent;c;c=c.parent) m=SWFPlayer.mul(c.entry.m,m);
+  return SWFPlayer.mul(mode==='arcade' ? ARC_FIELD_M : FIELD_M,m);
+}
+const glowFig=document.createElement('canvas'), glowGold=document.createElement('canvas'), glowHalo=document.createElement('canvas');
+const GLOW_RINGS=[[3.5,0.35,14],[2,1,10]];        // [radius, alpha, stamps]
+function drawRunnerGlow(n){
+  const c=runner(n), fig=c.children && [...c.children.values()].find(e=>e.name==='runner');
+  if(!fig || !fig.inst || fig.visible===false) return;
+  for(const k of [glowFig,glowGold,glowHalo]) if(k.width!==W || k.height!==H){ k.width=W; k.height=H; }
+  const f=glowFig.getContext('2d'), g=glowGold.getContext('2d'), h=glowHalo.getContext('2d');
+  f.setTransform(1,0,0,1,0,0); f.clearRect(0,0,W,H);
+  SWFPlayer.draw(f,fig.inst,fieldMatrix(c));
+  g.globalCompositeOperation='source-over'; g.clearRect(0,0,W,H); g.drawImage(glowFig,0,0);
+  g.globalCompositeOperation='source-in'; g.fillStyle='#ffd54a'; g.fillRect(0,0,W,H);
+  g.globalCompositeOperation='source-over';
+  h.globalCompositeOperation='source-over'; h.clearRect(0,0,W,H);
+  const pulse=0.75+0.25*Math.sin(performance.now()/180);         // a gentle pulse
+  for(const [r,al,k] of GLOW_RINGS){
+    h.globalAlpha=al*pulse;
+    for(let i=0;i<k;i++){ const t=i/k*2*Math.PI; h.drawImage(glowGold,r*Math.cos(t),r*Math.sin(t)); }
+  }
+  h.globalAlpha=1; h.globalCompositeOperation='destination-out'; h.drawImage(glowFig,0,0);
+  h.globalCompositeOperation='source-over';
+  ctx.setTransform(1,0,0,1,0,0); ctx.globalAlpha=1; ctx.drawImage(glowHalo,0,0);
+}
 function canSend(n){
   if(CLASSIC || G.inningOver || G.ballInPlay!=='yes' || M[`batsman${n}_out`]!=='no' || M[`potential_out${n}`]!=='yes') return 0;
   const to=M[`potential_out${n}_runningTo`], k=/^base\d$/.test(to) ? +to.slice(4) : 0, l=G.lead[n];
@@ -2782,6 +2844,7 @@ function loop(now){
     ctx.setTransform(1,0,0,1,0,0);
   }
   drawHUD();
+  if(glowRunner && G && G.view==='FIELD') drawRunnerGlow(glowRunner);
   placeNameInput();
   requestAnimationFrame(loop);
 }
@@ -2794,30 +2857,116 @@ for(const ev of ['gesturestart','gesturechange']) document.addEventListener(ev,e
 document.addEventListener('dblclick',e=>e.preventDefault());
 
 /* ===== controllers (Xbox, PlayStation and anything else with the browser's standard mapping) =====
+   Menus, result screens and the field view: D-pad / left stick moves a highlight between the
+   on-screen buttons and A/✕ presses the highlighted one. The colour bars on the setup pages:
+   A/✕ opens a picker cursor that the stick moves along the bar, A/✕ picks, B/○ cancels.
    Batting: left stick / D-pad steers the aim circle, A/✕ or RT/R2 swings, and between pitches
-   A/✕ or Menu/Options takes the next pitch. Everywhere else a pointer appears: move it with the
-   stick and press A/✕ to click. The pad drives the same mouse handlers as a real mouse. */
+   A/✕ or Menu/Options takes the next pitch. During a play: point the left stick (from the middle
+   of the diamond) at a runner, L1/LB advances him, R1/RB sends him back to the base he left.
+   The pad drives the same mouse handlers as a mouse. */
 (()=>{
   if(!navigator.getGamepads) return;
-  const ptrEl=document.getElementById('padptr'), note=document.getElementById('padnote');
-  const BTN={ A:0, MENU:9, RT:7, UP:12, DOWN:13, LEFT:14, RIGHT:15 };
-  const DEAD=0.18, SPEED=520, DPAD_SPEED=220;          // canvas px per second at full tilt
+  const ptrEl=document.getElementById('padptr'), focusEl=document.getElementById('padfocus'), note=document.getElementById('padnote');
+  const BTN={ A:0, B:1, LB:4, RB:5, MENU:9, RT:7, UP:12, DOWN:13, LEFT:14, RIGHT:15 };
+  const RUN_BTNS=[1501,1503,1520];                      // a runner's RUN button (advance / send on)
+  const PICKERS=[248,449,450];                          // team colour / skin colour bars
+  const DEAD=0.18, SPEED=520, DPAD_SPEED=220;          // aim / picker cursor: canvas px per second at full tilt
+  const REPEAT_FIRST=380, REPEAT_NEXT=140;              // menu navigation auto-repeat (ms)
   let ptr={x:W/2,y:H/2}, wasAim=false, prev=[], active=false, last=0, interacted=false, noteTimer=0;
+  let focus=null, picking=null, held=null, heldSince=0, heldLast=0, lastAt=null, chosen=null;
   for(const ev of ['mousedown','keydown','touchend']) addEventListener(ev,e=>{ if(e.isTrusted) interacted=true; },true);
-  // a real mouse or touch takes over again: hide the pad pointer
-  for(const ev of ['mousemove','touchstart']) cv.addEventListener(ev,e=>{ if(e.isTrusted && active){ active=false; ptrEl.style.display='none'; } });
+  // a real mouse or touch takes over again: drop the controller highlight / cursor
+  for(const ev of ['mousemove','touchstart']) cv.addEventListener(ev,e=>{ if(e.isTrusted && active){ active=false; picking=null; glowRunner=0; hide(); } });
+  const hide=()=>{ ptrEl.style.display='none'; focusEl.style.display='none'; };
 
-  const pointerMode=()=>!!(menu || finish || intro || instr || !G || G.view!=='BAT' || matchEnd || (btnNextShowing() && !canSwing()));
-  const client=q=>{ const r=cv.getBoundingClientRect(), k=r.width/W; return { clientX:r.left+q.x*k, clientY:r.top+q.y*k }; };
-  const send=type=>cv.dispatchEvent(new MouseEvent(type,{ bubbles:true, cancelable:true, ...client(ptr) }));
+  const aimMode=()=>!(menu || finish || intro || instr || !G || G.view!=='BAT' || matchEnd || (btnNextShowing() && !canSwing()));
+  const client=q=>{ const r=cv.getBoundingClientRect(), k=r.width/W; return { clientX:r.left+q.x*k, clientY:r.top+q.y*k, k }; };
+  const send=(type,q)=>cv.dispatchEvent(new MouseEvent(type,{ bubbles:true, cancelable:true, ...client(q) }));
   const axis=v=>Math.abs(v)<DEAD ? 0 : Math.sign(v)*((Math.abs(v)-DEAD)/(1-DEAD))**2;   // squared: fine control near centre
+  const centre=h=>({ x:(h.x0+h.x1)/2, y:(h.y0+h.y1)/2 });
+  const same=(a,b)=>a && b && a.id===b.id && a.owner===b.owner;
+
+  // the buttons a player can actually see and press: on the canvas, not tiny, and on top at their centre
+  function targets(){
+    const out=[];
+    for(const h of SWFPlayer.buttons()){
+      if(h.x1-h.x0<6 || h.y1-h.y0<6 || h.x1<0 || h.y1<0 || h.x0>W || h.y0>H) continue;
+      const c=centre(h), top=SWFPlayer.buttonAt(Math.max(0,Math.min(W-1,c.x)),Math.max(0,Math.min(H-1,c.y)));
+      if(!same(top,h) || out.some(o=>same(o,h))) continue;
+      out.push(h);
+    }
+    return out;
+  }
+  // nearest button in a direction: distance along it, plus a penalty for drifting sideways.
+  // Buttons inside a cone around the direction win. Up/down may leave the cone when it is
+  // empty (rows are offset from each other); left/right never do, so they stay on their row.
+  function step(list,from,dx,dy){
+    const f=centre(from); let best=null, bestScore=Infinity;
+    for(const h of list){
+      if(same(h,from)) continue;
+      const c=centre(h), vx=c.x-f.x, vy=c.y-f.y, along=vx*dx+vy*dy, side=Math.abs(vx*dy-vy*dx);
+      if(along<=4 || (dx && side>along*1.5)) continue;
+      const score=along+side*2.5+(side>along*1.5 ? 1e4 : 0);
+      if(score<bestScore){ bestScore=score; best=h; }
+    }
+    return best;
+  }
+  // a new screen: the button nearest where the highlight last was (Next → Play Ball), else top-left
+  // Field view: the runners who can be told something, and where they are on the canvas.
+  function runners(){
+    const out=[], btns=SWFPlayer.buttons();
+    for(const ch of field.get('runnerHolder').children.values()){
+      const c=ch.inst, n=c && c.vars && c.vars.runnerNumber; if(!n) continue;
+      const run=btns.find(h=>h.owner===c && RUN_BTNS.includes(h.id)), back=canSendBack(n);
+      if(!run && !back) continue;
+      const fig=[...c.children.values()].find(e=>e.name==='runner'), m=SWFPlayer.mul(fieldMatrix(c),fig ? fig.m : [1,0,0,1,0,0]);
+      out.push({ n, run, back, x:m[4], y:m[5] });   // where he is, for pointing the stick at him
+    }
+    return out;
+  }
+  function diamondCentre(){
+    let x=0, y=0, k=0;
+    for(let b=1;b<=4;b++){ const c=field.get(`base${b}`); if(!c) continue; const m=fieldMatrix(c); x+=m[4]; y+=m[5]; k++; }
+    return k ? {x:x/k,y:y/k} : {x:W/2,y:H/2};
+  }
+  // point the stick at a runner (from the middle of the diamond); L1/LB advances, R1/RB sends back
+  function runnerMode(rx,ry){
+    const list=runners();
+    if(Math.hypot(rx,ry)>0.5){
+      const o=diamondCentre(), a=Math.atan2(ry,rx); let best=null, bestD=Math.PI/2.5;
+      for(const r of list){
+        let d=Math.abs(Math.atan2(r.y-o.y,r.x-o.x)-a); if(d>Math.PI) d=2*Math.PI-d;
+        if(d<bestD){ bestD=d; best=r; }
+      }
+      if(best) chosen=best.n;
+    }
+    let sel=list.find(r=>r.n===chosen);
+    if(!sel && list.length===1){ sel=list[0]; chosen=sel.n; }   // only one runner to tell: no need to point
+    if(sel && pressed(BTN.LB) && sel.run) pressButton(sel.run);
+    if(sel && pressed(BTN.RB) && sel.back) sendBack(sel.n);
+    const next=btnNextShowing() && SWFPlayer.buttons().find(h=>h.id===1618);
+    if(next && (pressed(BTN.A) || pressed(BTN.MENU))) nextBallPressed();
+    ptrEl.style.display='none';
+    if(!sel && next){                                // nobody to move: highlight Next Pitch
+      const a=client({x:next.x0,y:next.y0}), b=client({x:next.x1,y:next.y1});
+      Object.assign(focusEl.style,{ display:'block', left:`${a.clientX-4}px`, top:`${a.clientY-4}px`,
+        width:`${b.clientX-a.clientX+8}px`, height:`${b.clientY-a.clientY+8}px` });
+    } else focusEl.style.display='none';
+    // drawn by the game loop: a glow around him (kept while he's in the play, even between moments
+    // when he has nothing to be told)
+    glowRunner=sel ? sel.n : chosen && M[`batsman${chosen}_out`]==='no' && runner(chosen)!==NO_CLIP ? chosen : 0;
+  }
+  let pressed=()=>false;
+  const firstOf=list=>lastAt
+    ? list.slice().sort((a,b)=>Math.hypot(centre(a).x-lastAt.x,centre(a).y-lastAt.y)-Math.hypot(centre(b).x-lastAt.x,centre(b).y-lastAt.y))[0]||null
+    : list.slice().sort((a,b)=>(a.y0-b.y0)||(a.x0-b.x0))[0]||null;
 
   function showNote(html,ms){
     note.innerHTML=html; note.classList.add('show');
     clearTimeout(noteTimer); noteTimer=setTimeout(()=>note.classList.remove('show'),ms);
   }
-  addEventListener('gamepadconnected',e=>{
-    showNote(`&#x1F3AE; Controller connected<br>Stick: aim / move &middot; A/&#x2715;: swing / select &middot; Menu/Options: next pitch`
+  addEventListener('gamepadconnected',()=>{
+    showNote(`&#x1F3AE; Controller connected<br>D-pad / stick: move &middot; A/&#x2715;: select / swing &middot; Menu/Options: next pitch<br>Base running: point the stick at a runner &middot; LB/L1: advance &middot; RB/R1: go back`
       + (interacted ? '' : `<br>Click or press any key once to turn the sound on`), 6000);
     if(!last) requestAnimationFrame(poll);
   });
@@ -2826,37 +2975,81 @@ document.addEventListener('dblclick',e=>e.preventDefault());
     const dt=Math.min(0.05,last ? (t-last)/1000 : 0); last=t;
     const pads=[...navigator.getGamepads()].filter(g=>g && g.connected);
     if(!pads.length){ last=0; prev=[]; return; }                        // stop until the next gamepadconnected
-    let dx=0, dy=0; const down=new Set();
+    let sx_=0, sy_=0; const down=new Set();
     for(const g of pads){
-      dx+=axis(g.axes[0]||0); dy+=axis(g.axes[1]||0);
+      sx_+=g.axes[0]||0; sy_+=g.axes[1]||0;
       g.buttons.forEach((b,i)=>{ if(b.pressed || b.value>0.5) down.add(i); });
     }
+    pressed=i=>down.has(i) && !prev.includes(i);
+    // analogue movement (aim circle, colour picker cursor): stick plus a slower D-pad
+    let dx=axis(sx_), dy=axis(sy_);
     if(down.has(BTN.LEFT)) dx-=DPAD_SPEED/SPEED; if(down.has(BTN.RIGHT)) dx+=DPAD_SPEED/SPEED;
     if(down.has(BTN.UP))   dy-=DPAD_SPEED/SPEED; if(down.has(BTN.DOWN))  dy+=DPAD_SPEED/SPEED;
-    const pressed=i=>down.has(i) && !prev.includes(i);
-    const any=dx||dy||down.size;
-    if(any && !active){ active=true; if(!wasAim) ptr={x:lastPointer.x||W/2,y:lastPointer.y||H/2}; }
+    // digital direction for menus: D-pad, or the stick pushed past half way; repeats while held
+    let dir=null;
+    if(down.has(BTN.UP) || sy_<-0.5) dir='up'; else if(down.has(BTN.DOWN) || sy_>0.5) dir='down';
+    else if(down.has(BTN.LEFT) || sx_<-0.5) dir='left'; else if(down.has(BTN.RIGHT) || sx_>0.5) dir='right';
+    let nav=null;
+    if(dir!==held){ held=dir; heldSince=heldLast=t; nav=dir; }
+    else if(dir && t-heldSince>REPEAT_FIRST && t-heldLast>REPEAT_NEXT){ heldLast=t; nav=dir; }
+    if((dx||dy||down.size) && !active){ active=true; focus=null; }
 
     if(active){
-      const aimMode=!pointerMode();
-      if(aimMode && !wasAim){ ptr={x:sx(345.95), y:sy(199)}; send('mousemove'); }   // each pitch: aim from aimCircle's authored spot
-      wasAim=aimMode;
-      if(dx||dy){
-        ptr.x+=dx*SPEED*dt; ptr.y+=dy*SPEED*dt;
-        const [x0,y0,x1,y1]=aimMode ? [sx(ACL_S.x),sy(ACL_S.y),sx(ACL_S.x+ACL_S.w),sy(ACL_S.y+ACL_S.h)] : [0,0,W-1,H-1];
-        ptr.x=Math.max(x0,Math.min(x1,ptr.x)); ptr.y=Math.max(y0,Math.min(y1,ptr.y));
-        send('mousemove');
+      const aiming=aimMode(), inField=!aiming && G && G.view==='FIELD' && !(menu || finish || intro || instr || matchEnd);
+      if(!inField){ glowRunner=0; chosen=null; }
+      if(aiming){
+        picking=null; focusEl.style.display='none'; ptrEl.style.display='none';
+        if(!wasAim){ ptr={x:sx(345.95), y:sy(199)}; send('mousemove',ptr); }   // each pitch: aim from aimCircle's authored spot
+        if(dx||dy){
+          ptr.x=Math.max(sx(ACL_S.x),Math.min(sx(ACL_S.x+ACL_S.w),ptr.x+dx*SPEED*dt));
+          ptr.y=Math.max(sy(ACL_S.y),Math.min(sy(ACL_S.y+ACL_S.h),ptr.y+dy*SPEED*dt));
+          send('mousemove',ptr);
+        }
+        if(canSwing() && (pressed(BTN.A) || pressed(BTN.RT))) send('mousedown',ptr);
+      } else if(inField){
+        picking=null; focus=null;
+        runnerMode(sx_,sy_);
+      } else if(btnNextShowing() && (pressed(BTN.A) || pressed(BTN.MENU))){
+        nextBallPressed();
+      } else {
+        const list=targets();
+        if(picking && !list.some(h=>same(h,picking))) picking=null;
+        if(picking){                                    // colour bar: free cursor inside the bar
+          ptr.x=Math.max(picking.x0+1,Math.min(picking.x1-1,ptr.x+dx*SPEED*0.5*dt));
+          ptr.y=Math.max(picking.y0+1,Math.min(picking.y1-1,ptr.y+dy*SPEED*0.5*dt));
+          send('mousemove',ptr);
+          if(pressed(BTN.A)){ send('mousedown',ptr); focus=picking; picking=null; }
+          else if(pressed(BTN.B)) picking=null;
+        } else {
+          if(focus) focus=list.find(h=>same(h,focus)) || null;      // follow it if it moved
+          if(!focus) focus=firstOf(list);
+          if(focus && nav){
+            const v={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]}[nav];
+            focus=step(list,focus,v[0],v[1]) || focus;
+          }
+          if(focus){
+            lastAt=centre(focus);
+            // hover look, hover sound, rules text, as with a mouse; not between pitches,
+            // where the mouse position is what the aim circle follows
+            if(menu || finish || intro || instr || matchEnd || !G || G.view!=='BAT') send('mousemove',lastAt);
+            if(pressed(BTN.A)){
+              if(PICKERS.includes(focus.id)){ picking=focus; ptr=centre(focus); send('mousemove',ptr); }
+              else send('mousedown',centre(focus));
+            }
+          }
+        }
+        // draw the highlight (or the picker cursor)
+        if(picking){
+          const c=client(ptr); focusEl.style.display='none';
+          Object.assign(ptrEl.style,{ display:'block', transform:`translate(${c.clientX-2}px,${c.clientY-2}px)` });
+        } else if(focus){
+          const a=client({x:focus.x0,y:focus.y0}), b=client({x:focus.x1,y:focus.y1});
+          ptrEl.style.display='none';
+          Object.assign(focusEl.style,{ display:'block', left:`${a.clientX-4}px`, top:`${a.clientY-4}px`,
+            width:`${b.clientX-a.clientX+8}px`, height:`${b.clientY-a.clientY+8}px` });
+        } else hide();
       }
-      if(pressed(BTN.A) || pressed(BTN.RT) || pressed(BTN.MENU)){
-        if(canSwing()){ if(!pressed(BTN.MENU)) send('mousedown'); }        // swing at the aim
-        else if(btnNextShowing()){ if(!pressed(BTN.RT)) nextBallPressed(); }
-        else if(pressed(BTN.A)) send('mousedown');                         // click whatever is under the pointer
-      }
-      if(aimMode) ptrEl.style.display='none';
-      else{
-        const c=client(ptr);
-        Object.assign(ptrEl.style,{ display:'block', transform:`translate(${c.clientX-2}px,${c.clientY-2}px)` });
-      }
+      wasAim=aiming;
     }
     prev=[...down];
     requestAnimationFrame(poll);

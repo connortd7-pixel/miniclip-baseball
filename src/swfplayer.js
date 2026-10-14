@@ -437,6 +437,8 @@ const Player = {
     return null;
   },
   setHover(p){ hoverPoint = p; },
+  // Every button drawn last frame, in draw order (for controller menu navigation).
+  buttons(){ return buttonHits.slice(); },
   resolveVar: null,
   onSound: null,              // fn(soundId, gain, clip)
   mul,

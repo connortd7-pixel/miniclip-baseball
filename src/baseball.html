@@ -22,9 +22,18 @@ canvas{display:block;cursor:none;box-shadow:0 6px 40px rgba(0,0,0,.6);height:aut
   background:rgba(255,255,255,.08);color:#cfd8e3;font:12px monospace;cursor:pointer;opacity:.6;}
 #fs:hover,#fs:focus-visible{opacity:1;background:rgba(255,255,255,.16);}
 #fs[hidden]{display:none;}
+/* controller pointer (menus and the field view) and the "controller connected" note */
+#padptr{position:fixed;left:0;top:0;width:22px;height:22px;pointer-events:none;display:none;z-index:5;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Cpath d='M2 2l0 16 4.5-4.2 3 6.6 3-1.4-3-6.4 6.3-.3z' fill='%23fff' stroke='%23000' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat;}
+#padnote{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);max-width:calc(100vw - 24px);padding:8px 12px;border-radius:6px;
+  background:rgba(6,6,15,.85);border:1px solid rgba(255,255,255,.2);color:#cfd8e3;font:12px/1.5 monospace;text-align:center;
+  pointer-events:none;opacity:0;transition:opacity .3s;z-index:6;}
+#padnote.show{opacity:1;}
 </style></head><body>
 <canvas id="c" width="700" height="475"></canvas>
 <button id="fs" type="button" title="Full screen (F)" hidden>&#x26F6; Full screen</button>
+<div id="padptr"></div>
+<div id="padnote" role="status"></div>
 <p id="rotate">Turn your phone sideways for a bigger view.<br>Drag to aim &middot; tap to swing</p>
 <script src="assets/swf/swf.js"></script>
 <script src="assets/swf/sounds.js"></script>
@@ -2783,6 +2792,76 @@ requestAnimationFrame(loop);
 document.addEventListener('touchmove',e=>{ if(e.target!==nameInput) e.preventDefault(); },{passive:false});
 for(const ev of ['gesturestart','gesturechange']) document.addEventListener(ev,e=>e.preventDefault());   // iOS pinch
 document.addEventListener('dblclick',e=>e.preventDefault());
+
+/* ===== controllers (Xbox, PlayStation and anything else with the browser's standard mapping) =====
+   Batting: left stick / D-pad steers the aim circle, A/✕ or RT/R2 swings, and between pitches
+   A/✕ or Menu/Options takes the next pitch. Everywhere else a pointer appears: move it with the
+   stick and press A/✕ to click. The pad drives the same mouse handlers as a real mouse. */
+(()=>{
+  if(!navigator.getGamepads) return;
+  const ptrEl=document.getElementById('padptr'), note=document.getElementById('padnote');
+  const BTN={ A:0, MENU:9, RT:7, UP:12, DOWN:13, LEFT:14, RIGHT:15 };
+  const DEAD=0.18, SPEED=520, DPAD_SPEED=220;          // canvas px per second at full tilt
+  let ptr={x:W/2,y:H/2}, wasAim=false, prev=[], active=false, last=0, interacted=false, noteTimer=0;
+  for(const ev of ['mousedown','keydown','touchend']) addEventListener(ev,e=>{ if(e.isTrusted) interacted=true; },true);
+  // a real mouse or touch takes over again: hide the pad pointer
+  for(const ev of ['mousemove','touchstart']) cv.addEventListener(ev,e=>{ if(e.isTrusted && active){ active=false; ptrEl.style.display='none'; } });
+
+  const pointerMode=()=>!!(menu || finish || intro || instr || !G || G.view!=='BAT' || matchEnd || (btnNextShowing() && !canSwing()));
+  const client=q=>{ const r=cv.getBoundingClientRect(), k=r.width/W; return { clientX:r.left+q.x*k, clientY:r.top+q.y*k }; };
+  const send=type=>cv.dispatchEvent(new MouseEvent(type,{ bubbles:true, cancelable:true, ...client(ptr) }));
+  const axis=v=>Math.abs(v)<DEAD ? 0 : Math.sign(v)*((Math.abs(v)-DEAD)/(1-DEAD))**2;   // squared: fine control near centre
+
+  function showNote(html,ms){
+    note.innerHTML=html; note.classList.add('show');
+    clearTimeout(noteTimer); noteTimer=setTimeout(()=>note.classList.remove('show'),ms);
+  }
+  addEventListener('gamepadconnected',e=>{
+    showNote(`&#x1F3AE; Controller connected<br>Stick: aim / move &middot; A/&#x2715;: swing / select &middot; Menu/Options: next pitch`
+      + (interacted ? '' : `<br>Click or press any key once to turn the sound on`), 6000);
+    if(!last) requestAnimationFrame(poll);
+  });
+
+  function poll(t){
+    const dt=Math.min(0.05,last ? (t-last)/1000 : 0); last=t;
+    const pads=[...navigator.getGamepads()].filter(g=>g && g.connected);
+    if(!pads.length){ last=0; prev=[]; return; }                        // stop until the next gamepadconnected
+    let dx=0, dy=0; const down=new Set();
+    for(const g of pads){
+      dx+=axis(g.axes[0]||0); dy+=axis(g.axes[1]||0);
+      g.buttons.forEach((b,i)=>{ if(b.pressed || b.value>0.5) down.add(i); });
+    }
+    if(down.has(BTN.LEFT)) dx-=DPAD_SPEED/SPEED; if(down.has(BTN.RIGHT)) dx+=DPAD_SPEED/SPEED;
+    if(down.has(BTN.UP))   dy-=DPAD_SPEED/SPEED; if(down.has(BTN.DOWN))  dy+=DPAD_SPEED/SPEED;
+    const pressed=i=>down.has(i) && !prev.includes(i);
+    const any=dx||dy||down.size;
+    if(any && !active){ active=true; if(!wasAim) ptr={x:lastPointer.x||W/2,y:lastPointer.y||H/2}; }
+
+    if(active){
+      const aimMode=!pointerMode();
+      if(aimMode && !wasAim){ ptr={x:sx(345.95), y:sy(199)}; send('mousemove'); }   // each pitch: aim from aimCircle's authored spot
+      wasAim=aimMode;
+      if(dx||dy){
+        ptr.x+=dx*SPEED*dt; ptr.y+=dy*SPEED*dt;
+        const [x0,y0,x1,y1]=aimMode ? [sx(ACL_S.x),sy(ACL_S.y),sx(ACL_S.x+ACL_S.w),sy(ACL_S.y+ACL_S.h)] : [0,0,W-1,H-1];
+        ptr.x=Math.max(x0,Math.min(x1,ptr.x)); ptr.y=Math.max(y0,Math.min(y1,ptr.y));
+        send('mousemove');
+      }
+      if(pressed(BTN.A) || pressed(BTN.RT) || pressed(BTN.MENU)){
+        if(canSwing()){ if(!pressed(BTN.MENU)) send('mousedown'); }        // swing at the aim
+        else if(btnNextShowing()){ if(!pressed(BTN.RT)) nextBallPressed(); }
+        else if(pressed(BTN.A)) send('mousedown');                         // click whatever is under the pointer
+      }
+      if(aimMode) ptrEl.style.display='none';
+      else{
+        const c=client(ptr);
+        Object.assign(ptrEl.style,{ display:'block', transform:`translate(${c.clientX-2}px,${c.clientY-2}px)` });
+      }
+    }
+    prev=[...down];
+    requestAnimationFrame(poll);
+  }
+})();
 
 /* ===== full screen toggle (button or F key) ===== */
 (()=>{

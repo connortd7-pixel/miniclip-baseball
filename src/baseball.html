@@ -25,6 +25,8 @@ canvas{display:block;cursor:none;box-shadow:0 6px 40px rgba(0,0,0,.6);height:aut
 /* controller pointer (menus and the field view) and the "controller connected" note */
 #padptr{position:fixed;left:0;top:0;width:22px;height:22px;pointer-events:none;display:none;z-index:5;
   background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Cpath d='M2 2l0 16 4.5-4.2 3 6.6 3-1.4-3-6.4 6.3-.3z' fill='%23fff' stroke='%23000' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat;}
+#padfocus{position:fixed;display:none;pointer-events:none;z-index:5;border:3px solid #ffd54a;border-radius:8px;
+  box-shadow:0 0 0 2px rgba(0,0,0,.55),0 0 14px rgba(255,213,74,.7);transition:left .08s,top .08s,width .08s,height .08s;}
 #padnote{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);max-width:calc(100vw - 24px);padding:8px 12px;border-radius:6px;
   background:rgba(6,6,15,.85);border:1px solid rgba(255,255,255,.2);color:#cfd8e3;font:12px/1.5 monospace;text-align:center;
   pointer-events:none;opacity:0;transition:opacity .3s;z-index:6;}
@@ -33,6 +35,7 @@ canvas{display:block;cursor:none;box-shadow:0 6px 40px rgba(0,0,0,.6);height:aut
 <canvas id="c" width="700" height="475"></canvas>
 <button id="fs" type="button" title="Full screen (F)" hidden>&#x26F6; Full screen</button>
 <div id="padptr"></div>
+<div id="padfocus"></div>
 <div id="padnote" role="status"></div>
 <p id="rotate">Turn your phone sideways for a bigger view.<br>Drag to aim &middot; tap to swing</p>
 <script src="assets/swf/swf.js"></script>
@@ -2794,30 +2797,68 @@ for(const ev of ['gesturestart','gesturechange']) document.addEventListener(ev,e
 document.addEventListener('dblclick',e=>e.preventDefault());
 
 /* ===== controllers (Xbox, PlayStation and anything else with the browser's standard mapping) =====
+   Menus, result screens and the field view: D-pad / left stick moves a highlight between the
+   on-screen buttons and A/✕ presses the highlighted one. The colour bars on the setup pages:
+   A/✕ opens a picker cursor that the stick moves along the bar, A/✕ picks, B/○ cancels.
    Batting: left stick / D-pad steers the aim circle, A/✕ or RT/R2 swings, and between pitches
-   A/✕ or Menu/Options takes the next pitch. Everywhere else a pointer appears: move it with the
-   stick and press A/✕ to click. The pad drives the same mouse handlers as a real mouse. */
+   A/✕ or Menu/Options takes the next pitch. The pad drives the same mouse handlers as a mouse. */
 (()=>{
   if(!navigator.getGamepads) return;
-  const ptrEl=document.getElementById('padptr'), note=document.getElementById('padnote');
-  const BTN={ A:0, MENU:9, RT:7, UP:12, DOWN:13, LEFT:14, RIGHT:15 };
-  const DEAD=0.18, SPEED=520, DPAD_SPEED=220;          // canvas px per second at full tilt
+  const ptrEl=document.getElementById('padptr'), focusEl=document.getElementById('padfocus'), note=document.getElementById('padnote');
+  const BTN={ A:0, B:1, MENU:9, RT:7, UP:12, DOWN:13, LEFT:14, RIGHT:15 };
+  const PICKERS=[248,449,450];                          // team colour / skin colour bars
+  const DEAD=0.18, SPEED=520, DPAD_SPEED=220;          // aim / picker cursor: canvas px per second at full tilt
+  const REPEAT_FIRST=380, REPEAT_NEXT=140;              // menu navigation auto-repeat (ms)
   let ptr={x:W/2,y:H/2}, wasAim=false, prev=[], active=false, last=0, interacted=false, noteTimer=0;
+  let focus=null, picking=null, held=null, heldSince=0, heldLast=0, lastAt=null;
   for(const ev of ['mousedown','keydown','touchend']) addEventListener(ev,e=>{ if(e.isTrusted) interacted=true; },true);
-  // a real mouse or touch takes over again: hide the pad pointer
-  for(const ev of ['mousemove','touchstart']) cv.addEventListener(ev,e=>{ if(e.isTrusted && active){ active=false; ptrEl.style.display='none'; } });
+  // a real mouse or touch takes over again: drop the controller highlight / cursor
+  for(const ev of ['mousemove','touchstart']) cv.addEventListener(ev,e=>{ if(e.isTrusted && active){ active=false; picking=null; hide(); } });
+  const hide=()=>{ ptrEl.style.display='none'; focusEl.style.display='none'; };
 
-  const pointerMode=()=>!!(menu || finish || intro || instr || !G || G.view!=='BAT' || matchEnd || (btnNextShowing() && !canSwing()));
-  const client=q=>{ const r=cv.getBoundingClientRect(), k=r.width/W; return { clientX:r.left+q.x*k, clientY:r.top+q.y*k }; };
-  const send=type=>cv.dispatchEvent(new MouseEvent(type,{ bubbles:true, cancelable:true, ...client(ptr) }));
+  const aimMode=()=>!(menu || finish || intro || instr || !G || G.view!=='BAT' || matchEnd || (btnNextShowing() && !canSwing()));
+  const client=q=>{ const r=cv.getBoundingClientRect(), k=r.width/W; return { clientX:r.left+q.x*k, clientY:r.top+q.y*k, k }; };
+  const send=(type,q)=>cv.dispatchEvent(new MouseEvent(type,{ bubbles:true, cancelable:true, ...client(q) }));
   const axis=v=>Math.abs(v)<DEAD ? 0 : Math.sign(v)*((Math.abs(v)-DEAD)/(1-DEAD))**2;   // squared: fine control near centre
+  const centre=h=>({ x:(h.x0+h.x1)/2, y:(h.y0+h.y1)/2 });
+  const same=(a,b)=>a && b && a.id===b.id && a.owner===b.owner;
+
+  // the buttons a player can actually see and press: on the canvas, not tiny, and on top at their centre
+  function targets(){
+    const out=[];
+    for(const h of SWFPlayer.buttons()){
+      if(h.x1-h.x0<6 || h.y1-h.y0<6 || h.x1<0 || h.y1<0 || h.x0>W || h.y0>H) continue;
+      const c=centre(h), top=SWFPlayer.buttonAt(Math.max(0,Math.min(W-1,c.x)),Math.max(0,Math.min(H-1,c.y)));
+      if(!same(top,h) || out.some(o=>same(o,h))) continue;
+      out.push(h);
+    }
+    return out;
+  }
+  // nearest button in a direction: distance along it, plus a penalty for drifting sideways.
+  // Buttons inside a cone around the direction win. Up/down may leave the cone when it is
+  // empty (rows are offset from each other); left/right never do, so they stay on their row.
+  function step(list,from,dx,dy){
+    const f=centre(from); let best=null, bestScore=Infinity;
+    for(const h of list){
+      if(same(h,from)) continue;
+      const c=centre(h), vx=c.x-f.x, vy=c.y-f.y, along=vx*dx+vy*dy, side=Math.abs(vx*dy-vy*dx);
+      if(along<=4 || (dx && side>along*1.5)) continue;
+      const score=along+side*2.5+(side>along*1.5 ? 1e4 : 0);
+      if(score<bestScore){ bestScore=score; best=h; }
+    }
+    return best;
+  }
+  // a new screen: the button nearest where the highlight last was (Next → Play Ball), else top-left
+  const firstOf=list=>lastAt
+    ? list.slice().sort((a,b)=>Math.hypot(centre(a).x-lastAt.x,centre(a).y-lastAt.y)-Math.hypot(centre(b).x-lastAt.x,centre(b).y-lastAt.y))[0]||null
+    : list.slice().sort((a,b)=>(a.y0-b.y0)||(a.x0-b.x0))[0]||null;
 
   function showNote(html,ms){
     note.innerHTML=html; note.classList.add('show');
     clearTimeout(noteTimer); noteTimer=setTimeout(()=>note.classList.remove('show'),ms);
   }
-  addEventListener('gamepadconnected',e=>{
-    showNote(`&#x1F3AE; Controller connected<br>Stick: aim / move &middot; A/&#x2715;: swing / select &middot; Menu/Options: next pitch`
+  addEventListener('gamepadconnected',()=>{
+    showNote(`&#x1F3AE; Controller connected<br>D-pad / stick: move &middot; A/&#x2715;: select / swing &middot; B/&#x25CB;: cancel &middot; Menu/Options: next pitch`
       + (interacted ? '' : `<br>Click or press any key once to turn the sound on`), 6000);
     if(!last) requestAnimationFrame(poll);
   });
@@ -2826,37 +2867,77 @@ document.addEventListener('dblclick',e=>e.preventDefault());
     const dt=Math.min(0.05,last ? (t-last)/1000 : 0); last=t;
     const pads=[...navigator.getGamepads()].filter(g=>g && g.connected);
     if(!pads.length){ last=0; prev=[]; return; }                        // stop until the next gamepadconnected
-    let dx=0, dy=0; const down=new Set();
+    let sx_=0, sy_=0; const down=new Set();
     for(const g of pads){
-      dx+=axis(g.axes[0]||0); dy+=axis(g.axes[1]||0);
+      sx_+=g.axes[0]||0; sy_+=g.axes[1]||0;
       g.buttons.forEach((b,i)=>{ if(b.pressed || b.value>0.5) down.add(i); });
     }
+    const pressed=i=>down.has(i) && !prev.includes(i);
+    // analogue movement (aim circle, colour picker cursor): stick plus a slower D-pad
+    let dx=axis(sx_), dy=axis(sy_);
     if(down.has(BTN.LEFT)) dx-=DPAD_SPEED/SPEED; if(down.has(BTN.RIGHT)) dx+=DPAD_SPEED/SPEED;
     if(down.has(BTN.UP))   dy-=DPAD_SPEED/SPEED; if(down.has(BTN.DOWN))  dy+=DPAD_SPEED/SPEED;
-    const pressed=i=>down.has(i) && !prev.includes(i);
-    const any=dx||dy||down.size;
-    if(any && !active){ active=true; if(!wasAim) ptr={x:lastPointer.x||W/2,y:lastPointer.y||H/2}; }
+    // digital direction for menus: D-pad, or the stick pushed past half way; repeats while held
+    let dir=null;
+    if(down.has(BTN.UP) || sy_<-0.5) dir='up'; else if(down.has(BTN.DOWN) || sy_>0.5) dir='down';
+    else if(down.has(BTN.LEFT) || sx_<-0.5) dir='left'; else if(down.has(BTN.RIGHT) || sx_>0.5) dir='right';
+    let nav=null;
+    if(dir!==held){ held=dir; heldSince=heldLast=t; nav=dir; }
+    else if(dir && t-heldSince>REPEAT_FIRST && t-heldLast>REPEAT_NEXT){ heldLast=t; nav=dir; }
+    if((dx||dy||down.size) && !active){ active=true; focus=null; }
 
     if(active){
-      const aimMode=!pointerMode();
-      if(aimMode && !wasAim){ ptr={x:sx(345.95), y:sy(199)}; send('mousemove'); }   // each pitch: aim from aimCircle's authored spot
-      wasAim=aimMode;
-      if(dx||dy){
-        ptr.x+=dx*SPEED*dt; ptr.y+=dy*SPEED*dt;
-        const [x0,y0,x1,y1]=aimMode ? [sx(ACL_S.x),sy(ACL_S.y),sx(ACL_S.x+ACL_S.w),sy(ACL_S.y+ACL_S.h)] : [0,0,W-1,H-1];
-        ptr.x=Math.max(x0,Math.min(x1,ptr.x)); ptr.y=Math.max(y0,Math.min(y1,ptr.y));
-        send('mousemove');
+      const aiming=aimMode();
+      if(aiming){
+        picking=null; focusEl.style.display='none'; ptrEl.style.display='none';
+        if(!wasAim){ ptr={x:sx(345.95), y:sy(199)}; send('mousemove',ptr); }   // each pitch: aim from aimCircle's authored spot
+        if(dx||dy){
+          ptr.x=Math.max(sx(ACL_S.x),Math.min(sx(ACL_S.x+ACL_S.w),ptr.x+dx*SPEED*dt));
+          ptr.y=Math.max(sy(ACL_S.y),Math.min(sy(ACL_S.y+ACL_S.h),ptr.y+dy*SPEED*dt));
+          send('mousemove',ptr);
+        }
+        if(canSwing() && (pressed(BTN.A) || pressed(BTN.RT))) send('mousedown',ptr);
+      } else if(btnNextShowing() && (pressed(BTN.A) || pressed(BTN.MENU))){
+        nextBallPressed();
+      } else {
+        const list=targets();
+        if(picking && !list.some(h=>same(h,picking))) picking=null;
+        if(picking){                                    // colour bar: free cursor inside the bar
+          ptr.x=Math.max(picking.x0+1,Math.min(picking.x1-1,ptr.x+dx*SPEED*0.5*dt));
+          ptr.y=Math.max(picking.y0+1,Math.min(picking.y1-1,ptr.y+dy*SPEED*0.5*dt));
+          send('mousemove',ptr);
+          if(pressed(BTN.A)){ send('mousedown',ptr); focus=picking; picking=null; }
+          else if(pressed(BTN.B)) picking=null;
+        } else {
+          if(focus) focus=list.find(h=>same(h,focus)) || null;      // follow it if it moved
+          if(!focus) focus=firstOf(list);
+          if(focus && nav){
+            const v={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]}[nav];
+            focus=step(list,focus,v[0],v[1]) || focus;
+          }
+          if(focus){
+            lastAt=centre(focus);
+            // hover look, hover sound, rules text, as with a mouse; not between pitches,
+            // where the mouse position is what the aim circle follows
+            if(menu || finish || intro || instr || matchEnd || !G || G.view!=='BAT') send('mousemove',lastAt);
+            if(pressed(BTN.A)){
+              if(PICKERS.includes(focus.id)){ picking=focus; ptr=centre(focus); send('mousemove',ptr); }
+              else send('mousedown',centre(focus));
+            }
+          }
+        }
+        // draw the highlight (or the picker cursor)
+        if(picking){
+          const c=client(ptr); focusEl.style.display='none';
+          Object.assign(ptrEl.style,{ display:'block', transform:`translate(${c.clientX-2}px,${c.clientY-2}px)` });
+        } else if(focus){
+          const a=client({x:focus.x0,y:focus.y0}), b=client({x:focus.x1,y:focus.y1});
+          ptrEl.style.display='none';
+          Object.assign(focusEl.style,{ display:'block', left:`${a.clientX-4}px`, top:`${a.clientY-4}px`,
+            width:`${b.clientX-a.clientX+8}px`, height:`${b.clientY-a.clientY+8}px` });
+        } else hide();
       }
-      if(pressed(BTN.A) || pressed(BTN.RT) || pressed(BTN.MENU)){
-        if(canSwing()){ if(!pressed(BTN.MENU)) send('mousedown'); }        // swing at the aim
-        else if(btnNextShowing()){ if(!pressed(BTN.RT)) nextBallPressed(); }
-        else if(pressed(BTN.A)) send('mousedown');                         // click whatever is under the pointer
-      }
-      if(aimMode) ptrEl.style.display='none';
-      else{
-        const c=client(ptr);
-        Object.assign(ptrEl.style,{ display:'block', transform:`translate(${c.clientX-2}px,${c.clientY-2}px)` });
-      }
+      wasAim=aiming;
     }
     prev=[...down];
     requestAnimationFrame(poll);
